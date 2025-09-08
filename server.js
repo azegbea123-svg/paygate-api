@@ -1,5 +1,6 @@
 import express from "express";
-import fetch from "node-fetch";
+import fetch from "node-fetch"; // pour v2
+
 
 const app = express();
 app.use(express.json());
