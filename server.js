@@ -1,11 +1,14 @@
 import express from "express";
-import fetch from "node-fetch"; // pour v2
-
+import fetch from "node-fetch";
+import cors from "cors";
 
 const app = express();
-app.use(express.json());
 
-// 🔑 Le token est stocké dans Render (Settings → Environment → AUTH_TOKEN)
+// ✅ Middleware
+app.use(express.json());
+app.use(cors({ origin: "*" })); // autorise toutes les origines (tu peux restreindre plus tard)
+
+// 🔑 Le token PayGate doit être défini dans Render (Settings → Environment → AUTH_TOKEN)
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
 
 // ✅ Route pour initier un paiement
