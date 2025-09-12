@@ -3,15 +3,13 @@ import fetch from "node-fetch";
 import cors from "cors";
 
 const app = express();
-
-// ✅ Middleware
 app.use(express.json());
-app.use(cors({ origin: "*" })); // autorise toutes les origines (à restreindre plus tard)
+app.use(cors({ origin: "*" }));
 
-// 🔑 Le token PayGate est défini dans Render (Settings → Environment → AUTH_TOKEN)
+// 🔑 Token PayGate (Render → Environment → AUTH_TOKEN)
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
 
-// ✅ Route pour initier un paiement
+// ✅ Initier un paiement
 app.post("/pay", async (req, res) => {
   const { phone_number, amount, network } = req.body;
   const identifier = "TX-" + Date.now();
@@ -33,11 +31,11 @@ app.post("/pay", async (req, res) => {
     const result = await response.json();
     console.log("💸 Paiement initié:", result);
 
-    // 🔹 On simplifie la réponse au frontend
     res.json({
       success: result.status === 0 || result.success === true,
-      payment_reference: result.tx_reference || result.payment_reference,
-      raw: result, // tu gardes la réponse brute si besoin
+      tx_reference: result.tx_reference, // pour suivi interne
+      payment_reference: result.payment_reference || null, // ✅ ton futur code VIP
+      raw: result,
     });
   } catch (err) {
     console.error("❌ Erreur /pay:", err);
@@ -45,7 +43,7 @@ app.post("/pay", async (req, res) => {
   }
 });
 
-// ✅ Vérifier le statut d'une transaction
+// ✅ Vérifier le statut
 app.post("/check-status", async (req, res) => {
   const { tx_reference } = req.body;
 
@@ -64,6 +62,7 @@ app.post("/check-status", async (req, res) => {
 
     res.json({
       success: result.status === 0,
+      payment_reference: result.payment_reference || null, // ✅ retourne le code VIP réel
       raw: result,
     });
   } catch (err) {
@@ -72,39 +71,22 @@ app.post("/check-status", async (req, res) => {
   }
 });
 
-// ✅ Vérifier ton solde
-app.post("/check-balance", async (req, res) => {
-  try {
-    const response = await fetch("https://paygateglobal.com/api/v1/check-balance", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        auth_token: AUTH_TOKEN,
-      }),
-    });
-
-    const result = await response.json();
-    console.log("💰 Solde:", result);
-    res.json(result);
-  } catch (err) {
-    console.error("❌ Erreur /check-balance:", err);
-    res.status(500).json({ error: "Impossible de consulter le solde" });
-  }
-});
-
-// ✅ Callback (PayGate envoie ici la confirmation finale)
+// ✅ Callback (confirmation PayGate)
 app.post("/callback", (req, res) => {
   console.log("📩 Callback reçu:", req.body);
 
-  // Ici tu peux : 
-  // - marquer le code comme actif dans Firestore automatiquement
-  // - ou simplement logger pour vérifier
-  // NB : callback => confirmation de PayGate que le paiement est bien passé
+  // Exemple : récupération du vrai code VIP
+  const paymentRef = req.body.payment_reference;
+
+  if (paymentRef) {
+    console.log("✅ Code VIP confirmé:", paymentRef);
+    // 👉 Ici tu peux l’enregistrer dans Firestore avec l’UID utilisateur
+  }
 
   res.json({ message: "Callback bien reçu" });
 });
 
-// 🚀 Lancer le serveur
+// 🚀 Lancer serveur
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 API en ligne sur port ${PORT}`);
