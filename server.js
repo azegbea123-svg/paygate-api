@@ -6,9 +6,9 @@ const app = express();
 
 // ✅ Middleware
 app.use(express.json());
-app.use(cors({ origin: "*" })); // autorise toutes les origines (tu peux restreindre plus tard)
+app.use(cors({ origin: "*" })); // autorise toutes les origines (à restreindre plus tard)
 
-// 🔑 Le token PayGate doit être défini dans Render (Settings → Environment → AUTH_TOKEN)
+// 🔑 Le token PayGate est défini dans Render (Settings → Environment → AUTH_TOKEN)
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
 
 // ✅ Route pour initier un paiement
@@ -32,7 +32,13 @@ app.post("/pay", async (req, res) => {
 
     const result = await response.json();
     console.log("💸 Paiement initié:", result);
-    res.json(result);
+
+    // 🔹 On simplifie la réponse au frontend
+    res.json({
+      success: result.status === 0 || result.success === true,
+      payment_reference: result.tx_reference || result.payment_reference,
+      raw: result, // tu gardes la réponse brute si besoin
+    });
   } catch (err) {
     console.error("❌ Erreur /pay:", err);
     res.status(500).json({ error: "Impossible d’initier le paiement" });
@@ -55,7 +61,11 @@ app.post("/check-status", async (req, res) => {
 
     const result = await response.json();
     console.log("🔍 Statut transaction:", result);
-    res.json(result);
+
+    res.json({
+      success: result.status === 0,
+      raw: result,
+    });
   } catch (err) {
     console.error("❌ Erreur /check-status:", err);
     res.status(500).json({ error: "Impossible de vérifier le statut" });
@@ -82,9 +92,15 @@ app.post("/check-balance", async (req, res) => {
   }
 });
 
-// ✅ Callback (PayGate envoie ici la confirmation)
+// ✅ Callback (PayGate envoie ici la confirmation finale)
 app.post("/callback", (req, res) => {
   console.log("📩 Callback reçu:", req.body);
+
+  // Ici tu peux : 
+  // - marquer le code comme actif dans Firestore automatiquement
+  // - ou simplement logger pour vérifier
+  // NB : callback => confirmation de PayGate que le paiement est bien passé
+
   res.json({ message: "Callback bien reçu" });
 });
 
