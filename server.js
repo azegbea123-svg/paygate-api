@@ -55,7 +55,7 @@ app.post("/pay", async (req, res) => {
 
     res.json({
       success: result.status === 0 || result.success === true,
-      payment_reference: result.tx_reference, // provisoire comme code VIP
+      payment_reference: result.tx_reference, // provisoire
       raw: result,
     });
   } catch (err) {
@@ -82,16 +82,31 @@ app.post("/check-status", async (req, res) => {
     console.log("🔍 Statut transaction:", result);
 
     if (result.status === 0 && result.payment_reference) {
-      // ✅ Activer le VIP dans Firestore
-      await db.collection("vip_codes").doc(tx_reference.toString()).update({
-        status: "active",
-        utilise: true,
-        payment_reference: result.payment_reference,
-        activatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        vipExpiresAt: admin.firestore.Timestamp.fromDate(
-          new Date(Date.now() + 10 * 24 * 60 * 60 * 1000) // +10 jours
-        ),
-      });
+      // ✅ Activer le VIP dans Firestore (migrer vers payment_reference)
+      const vipDoc = db.collection("vip_codes").doc(tx_reference.toString());
+      const snap = await vipDoc.get();
+
+      if (snap.exists) {
+        const data = snap.data();
+
+        await db.collection("vip_codes").doc(result.payment_reference.toString()).set({
+          code: result.payment_reference.toString(),
+          status: "active",
+          utilise: true,
+          utilisePar: data.utilisePar || null,
+          tx_reference,
+          payment_reference: result.payment_reference,
+          activatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          vipExpiresAt: admin.firestore.Timestamp.fromDate(
+            new Date(Date.now() + 10 * 24 * 60 * 60 * 1000) // +10 jours
+          ),
+        });
+
+        await vipDoc.update({
+          migratedTo: result.payment_reference,
+          status: "migrated",
+        });
+      }
     }
 
     res.json({
@@ -127,21 +142,41 @@ app.post("/check-balance", async (req, res) => {
 app.post("/callback", async (req, res) => {
   console.log("📩 Callback reçu:", req.body);
 
-  const { tx_reference, payment_reference } = req.body;
+  const { tx_reference, payment_reference, amount, phone_number } = req.body;
 
   if (tx_reference && payment_reference) {
-    // ✅ Activer le code VIP à la confirmation
-    await db.collection("vip_codes").doc(tx_reference.toString()).update({
-      status: "active",
-      utilise: true,
-      payment_reference,
-      activatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      vipExpiresAt: admin.firestore.Timestamp.fromDate(
-        new Date(Date.now() + 10 * 24 * 60 * 60 * 1000) // +10 jours
-      ),
-    });
+    // 🔹 Récupérer le doc provisoire
+    const vipDoc = db.collection("vip_codes").doc(tx_reference.toString());
+    const snap = await vipDoc.get();
 
-    console.log(`✅ VIP ${tx_reference} activé avec ref ${payment_reference}`);
+    if (snap.exists) {
+      const data = snap.data();
+
+      // 🔹 Créer le vrai VIP code basé sur payment_reference
+      await db.collection("vip_codes").doc(payment_reference.toString()).set({
+        code: payment_reference.toString(),
+        status: "active",
+        utilise: true,
+        utilisePar: data.utilisePar || null, // uid de l’initiateur
+        tx_reference,
+        amount,
+        phone_number,
+        activatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        vipExpiresAt: admin.firestore.Timestamp.fromDate(
+          new Date(Date.now() + 10 * 24 * 60 * 60 * 1000) // +10 jours
+        ),
+      });
+
+      // 🔹 Marquer l’ancien doc
+      await vipDoc.update({
+        migratedTo: payment_reference,
+        status: "migrated",
+      });
+
+      console.log(`✅ VIP activé: ${payment_reference} lié à UID ${data.utilisePar}`);
+    } else {
+      console.warn("⚠️ Aucun doc provisoire trouvé pour", tx_reference);
+    }
   }
 
   res.json({ message: "Callback bien reçu" });
