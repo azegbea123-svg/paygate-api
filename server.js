@@ -7,10 +7,10 @@ const app = express();
 app.use(express.json());
 app.use(cors({ origin: "*" }));
 
-// 🔑 Token PayGate
+// 🔑 PayGate token
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
 
-// ✅ Initialisation Firebase Admin
+// 🔑 Firebase Admin SDK
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.applicationDefault(),
@@ -20,7 +20,7 @@ const db = admin.firestore();
 
 // ✅ Initier un paiement
 app.post("/pay", async (req, res) => {
-  const { phone_number, amount, network, uid } = req.body; // 🔹 uid ajouté
+  const { phone_number, amount, network, uid } = req.body;
   const identifier = "TX-" + Date.now();
 
   try {
@@ -40,22 +40,10 @@ app.post("/pay", async (req, res) => {
     const result = await response.json();
     console.log("💸 Paiement initié:", result);
 
-    // 🔹 Sauvegarde provisoire de la transaction avec l’uid
-    if (uid && result.tx_reference) {
-      await db.collection("transactions").doc(result.tx_reference.toString()).set({
-        uid,
-        phone_number,
-        amount,
-        network,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        status: "pending",
-      });
-    }
-
     res.json({
       success: result.status === 0 || result.success === true,
       tx_reference: result.tx_reference,
-      payment_reference: result.payment_reference || null, // ⚡ futur code VIP
+      payment_reference: result.payment_reference || null,
       raw: result,
     });
   } catch (err) {
@@ -64,9 +52,9 @@ app.post("/pay", async (req, res) => {
   }
 });
 
-// ✅ Vérifier le statut
+// ✅ Vérifier le statut d'une transaction
 app.post("/check-status", async (req, res) => {
-  const { tx_reference } = req.body;
+  const { tx_reference, uid } = req.body;
 
   try {
     const response = await fetch("https://paygateglobal.com/api/v1/status", {
@@ -81,6 +69,29 @@ app.post("/check-status", async (req, res) => {
     const result = await response.json();
     console.log("🔍 Statut transaction:", result);
 
+    if (result.status === 0 && result.payment_reference) {
+      const vipCode = result.payment_reference;
+
+      // 📌 Sauvegarde dans vip_codes
+      await db.collection("vip_codes").doc(vipCode).set({
+        code: vipCode,
+        uid: uid || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "active",
+      });
+
+      // 📌 Attribution au user (si UID fourni)
+      if (uid) {
+        await db.collection("users").doc(uid).update({
+          vip_code: vipCode,
+          vip_active: true,
+          vip_since: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      console.log(`🎉 VIP ${vipCode} attribué à UID: ${uid || "anonyme"}`);
+    }
+
     res.json({
       success: result.status === 0,
       payment_reference: result.payment_reference || null,
@@ -92,50 +103,39 @@ app.post("/check-status", async (req, res) => {
   }
 });
 
-// ✅ Callback (confirmation PayGate → crée le code VIP)
+// ✅ Callback PayGate
 app.post("/callback", async (req, res) => {
   console.log("📩 Callback reçu:", req.body);
 
-  try {
-    const { payment_reference, tx_reference, phone_number, amount } = req.body;
-    if (!payment_reference) {
-      return res.status(400).json({ error: "payment_reference manquant" });
-    }
+  const { payment_reference, amount, phone_number, identifier, status, uid } = req.body;
 
-    // Récupérer l’UID associé à la transaction (s’il existe)
-    let uid = null;
-    if (tx_reference) {
-      const transSnap = await db.collection("transactions").doc(tx_reference.toString()).get();
-      if (transSnap.exists) {
-        uid = transSnap.data().uid || null;
-      }
-    }
+  if (payment_reference && status === "0") {
+    const vipCode = payment_reference;
 
-    // Calcul expiration (10 jours)
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 10);
-
-    // Enregistrement du code VIP
-    await db.collection("vip_codes").add({
-      code: payment_reference, // ✅ code VIP
-      utilise: true,
-      utilisePar: uid || null,
-      vipExpiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
-      dateUtilisation: admin.firestore.FieldValue.serverTimestamp(),
-      active: true,
-      via: "paygate",
-      tx_reference,
-      phone_number,
+    // 📌 Sauvegarde dans vip_codes
+    await db.collection("vip_codes").doc(vipCode).set({
+      code: vipCode,
+      uid: uid || null,
       amount,
+      phone_number,
+      identifier,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: "active",
     });
 
-    console.log(`✅ Code VIP confirmé et enregistré: ${payment_reference} (uid: ${uid || "aucun"})`);
+    // 📌 Attribution directe à l’utilisateur
+    if (uid) {
+      await db.collection("users").doc(uid).update({
+        vip_code: vipCode,
+        vip_active: true,
+        vip_since: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
 
-    res.json({ success: true, code: payment_reference });
-  } catch (error) {
-    console.error("❌ Erreur enregistrement VIP:", error);
-    res.status(500).json({ error: "Impossible d’enregistrer le code VIP" });
+    console.log(`✅ Code VIP ${vipCode} attribué à UID: ${uid || "anonyme"}`);
   }
+
+  res.json({ message: "Callback bien reçu" });
 });
 
 // 🚀 Lancer serveur
