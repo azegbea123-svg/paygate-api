@@ -3,6 +3,17 @@ import fetch from "node-fetch";
 import cors from "cors";
 import admin from "firebase-admin";
 
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
+
+const db = admin.firestore();
+
+
 const app = express();
 
 // ✅ Middleware
